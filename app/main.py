@@ -1,6 +1,6 @@
 from fastapi import FastAPI,Depends,HTTPException,status
 from app.database import create_db_and_tables,get_session
-from app.models import Todo
+from app.models import Todo,TodoBase,TodoCreate,TodoUpdate
 from sqlmodel import Session,select
 from typing import List
 
@@ -15,21 +15,21 @@ def on_start_up():
 # CREATE TODO
 # ----------------------------
 
-@app.post("/todos/",response_model=Todo,status_code=201)
-def create_todo(todo:Todo,session:Session=Depends(get_session))-> Todo:
+@app.post("/todos/",response_model=Todo,status_code=status.HTTP_201_CREATED)
+def create_todo(todo_in:TodoCreate,session:Session=Depends(get_session))-> Todo:
     """
     This function receives:
       - todo: the new Todo object from the client (title, description, etc.)
       - session: the database session (injected automatically using Depends)
     """
-
+    todo=Todo.from_orm(todo_in) #build DB object from input
     session.add(todo)
     session.commit()
     session.refresh(todo)
     return todo
 
 # ----------------------------
-# READ TODO
+# READ ALL
 # ----------------------------
 
 @app.get("/todos/",response_model=List[Todo])
@@ -57,34 +57,38 @@ def get_todo(todo_id:int,session:Session=Depends(get_session))->Todo:
     return todo
 
 # ----------------------------
+# PARIAL UPDATE a single todo
+# ----------------------------
+@app.patch("/todos/{todo_id}",response_model=Todo)
+def partial_update(todo_id:int,todo_in:TodoUpdate,session:Session=Depends(get_session))->Todo:
+    todo_obj=session.get(Todo,todo_id)
+    if not todo_obj:
+        raise HTTPException(status_code=404,detail="Todo not found")
+    
+    data=todo_in.dict(exclude_unset=True)
+    for k,v in data.items():
+        setattr(todo_obj,k,v)
+    session.add(todo_obj)
+    session.commit()
+    session.refresh(todo_obj)
+    return todo_obj
+
+# ----------------------------
 # UPDATE a single todo
 # ----------------------------
 
 @app.put("/todos/{todo_id}",response_model=Todo)
-def update_todo(todo_id:int,todo:Todo,session:Session=Depends(get_session)):
+def replace_todo(todo_id:int,todo_in:TodoCreate,session:Session=Depends(get_session)):
 
     todo_obj=session.get(Todo,todo_id)
 
     if not todo_obj:
         raise HTTPException(status_code=404,detail="Todo not found")
     
-    todo_obj.title=todo.title
-    todo_obj.description=todo.description
-    todo_obj.completed=todo.completed
+    todo_obj.title=todo_in.title
+    todo_obj.description=todo_in.description
+    todo_obj.completed=todo_in.completed
 
-    session.add(todo_obj)
-    session.commit()
-    session.refresh(todo_obj)
-    return todo_obj
-# ----------------------------
-# PARIAL UPDATE a single todo
-# ----------------------------
-@app.patch("/todos/{todo_id}",response_model=Todo)
-def partial_update(todo_id:int,todo:Todo,session:Session=Depends(get_session))->Todo:
-    todo_obj=session.get(todo,todo_id)
-    if not todo_obj:
-        raise HTTPException(status_code=404,detail="Todo not found")
-    
     session.add(todo_obj)
     session.commit()
     session.refresh(todo_obj)
@@ -105,3 +109,6 @@ def delete_todo(todo_id:int,session:Session=Depends(get_session)):
     session.commit()
 
     return None
+
+#asyncronous 
+#multi threading
