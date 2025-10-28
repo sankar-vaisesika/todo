@@ -1,19 +1,27 @@
-from typing import Optional
-from sqlmodel import SQLModel,Field
+from typing import Optional,List
+from sqlmodel import SQLModel,Field,Relationship
 from datetime import datetime
 
+# -------------------------
+# User models
+# -------------------------
 
-# class Todo(SQLModel, table=True):
-#     id: Optional[int] = Field(default=None, primary_key=True)
-#     title: str
-#     description: Optional[str] = None
-#     completed: bool = False
-#     created_at: datetime = Field(default_factory=datetime.utcnow)
+class UserBase(SQLModel):
+    username:str=Field(max_length=20,description="Unique username")
+
+class UserCreate(UserBase):
+    password:str
+
+class User(UserBase,table=True):
+    id:Optional[int]=Field(default=None,primary_key=True)
+    hashed_password:str
+    # Relationship: one user -> many todos
+    todos: List["Todo"] = Relationship(back_populates="owner")
 
 class TodoBase(SQLModel):
     title:str=Field(max_length=100)
     description:Optional[str]=Field(None,max_length=200)
-    completed:Optional[bool]=None
+    completed:bool=Field(False)
 
 
 # Model used when creating (input)
@@ -32,3 +40,6 @@ class Todo(TodoBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
+    # Owner foreign key and relationship
+    owner_id: Optional[int] = Field(default=None, foreign_key="user.id")
+    owner: Optional[User] = Relationship(back_populates="todos")
