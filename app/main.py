@@ -5,7 +5,7 @@ from sqlmodel import Session,select
 from typing import List
 from fastapi.security import OAuth2PasswordRequestForm
 from app.auth import authenticate_user_db,get_current_user,get_password_hash,create_access_token
-
+import re
 
 app=FastAPI(title="Todo API")
 
@@ -13,23 +13,77 @@ app=FastAPI(title="Todo API")
 def on_start_up():
     create_db_and_tables()
 
+# Normalize username: trim, lowercase, replace spaces with underscore
+def normalize_username(raw: str) -> str:
+    return raw.strip().lower().replace(" ", "_")
 
+# Username must match this: lowercase letters, digits, underscore only
+USERNAME_REGEX = re.compile(r"^[a-z0-9_]+$")
+
+def validate_username_format(username: str) -> None:
+    """
+    Raises HTTPException(400) if username invalid.
+    """
+    if not USERNAME_REGEX.match(username):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username may contain only lowercase letters, digits and underscore (_). "
+                   "No spaces or special characters allowed."
+        )
+
+# Password rules: min_length, at least one digit, at least one uppercase letter, at least one lowercase letter
+def validate_password_strength(password: str, min_length: int = 8) -> None:
+    errors = []
+    if len(password) < min_length:
+        errors.append(f"at least {min_length} characters")
+    if not re.search(r"\d", password):
+        errors.append("at least one digit")
+    if not re.search(r"[A-Z]", password):
+        errors.append("at least one uppercase letter")
+    if not re.search(r"[a-z]", password):
+        errors.append("at least one lowercase letter")
+
+    if errors:
+        # Build a single readable message
+        msg = "Password must contain " + ", ".join(errors) + "."
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
 
 # ----------------------------
 # User registration
 # ----------------------------
 @app.post("/register", status_code=status.HTTP_201_CREATED)
 def register(user_in: UserCreate, session: Session = Depends(get_session)):
-    # check if username already exists
-    statement = select(User).where(User.username == user_in.username)
-    if session.exec(statement).first():
-        raise HTTPException(status_code=400, detail="Username already registered")
+    """
+    Register new user:
+      - normalize username
+      - validate username format
+      - check uniqueness (case-insensitive because usernames are stored normalized)
+      - validate password strength
+      - store hashed password
+    """
+    # 1) Normalize username
+    normalized = normalize_username(user_in.username)
 
+    # 2) Validate username format
+    validate_username_format(normalized)
+
+
+    # 3) Check uniqueness (username stored normalized, so equality works)
+    statement = select(User).where(User.username == normalized)
+    if session.exec(statement).first():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already registered")
+
+    # 4) Validate password strength
+    validate_password_strength(user_in.password)
+
+    #5) create user
     hashed = get_password_hash(user_in.password)
-    user = User(username=user_in.username, hashed_password=hashed)
+    user = User(username=normalized, hashed_password=hashed)
     session.add(user)
     session.commit()
     session.refresh(user)
+
+    # 6) Return minimal info
     return {"id": user.id, "username": user.username}
 
 # ----------------------------
@@ -140,6 +194,21 @@ def delete_todo(todo_id: int, session: Session = Depends(get_session), current_u
     session.delete(todo)
     session.commit()
     return None
+
+#date , notification in the todo and title should be managed 
+#background scheduler
+#username
+
+
+
+
+
+
+
+
+
+
+
 
 #asyncronous 
 #multi threading

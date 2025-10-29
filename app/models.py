@@ -7,7 +7,7 @@ from datetime import datetime
 # -------------------------
 
 class UserBase(SQLModel):
-    username:str=Field(max_length=20,description="Unique username")
+    username:str=Field(unique=True,nullable=False,max_length=20,description="Unique username")
 
 class UserCreate(UserBase):
     password:str
