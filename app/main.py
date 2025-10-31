@@ -13,26 +13,78 @@ app=FastAPI(title="Todo API")
 def on_start_up():
     create_db_and_tables()
 
-# Normalize username: trim, lowercase, replace spaces with underscore
-def normalize_username(raw: str) -> str:
-    return raw.strip().lower().replace(" ", "_")
+
+def normalize_username_candidate(raw: str) -> str:
+    """
+    Only strip leading/trailing whitespace. Do NOT change spaces internally here;
+    we will reject usernames containing spaces explicitly.
+    """
+    return raw.strip()
 
 # Username must match this: lowercase letters, digits, underscore only
 USERNAME_REGEX = re.compile(r"^[a-z0-9_]+$")
 
-def validate_username_format(username: str) -> None:
+def validate_username(username_raw: str) -> str:
     """
-    Raises HTTPException(400) if username invalid.
+    Validate and return the normalized username (stripped).
+    Raises HTTPException(400) if invalid.
+    Rules:
+      - no spaces at all
+      - must be lowercase (reject if contains uppercase)
+      - only a-z, 0-9 and underscore allowed
     """
-    if not USERNAME_REGEX.match(username):
+    if username_raw is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username is required")
+    
+    candidate = normalize_username_candidate(username_raw)
+
+
+    # 1) No spaces anywhere
+    if " " in candidate:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username may contain only lowercase letters, digits and underscore (_). "
-                   "No spaces or special characters allowed."
+            detail="Username must not contain spaces. Use lowercase letters, digits and underscore only."
         )
 
-# Password rules: min_length, at least one digit, at least one uppercase letter, at least one lowercase letter
+    # 2) Must be lowercase (reject uppercase)
+    if candidate != candidate.lower():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username must be lowercase only (no uppercase letters)."
+        )
+
+    # 3) Only allowed characters
+    if not USERNAME_REGEX.fullmatch(candidate):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username may contain only lowercase letters (a-z), digits (0-9) and underscore (_)."
+        )
+
+    return candidate
+
+
+# -------------------------
+# Password validation helpers
+# -------------------------
+# Define allowed special symbols (choose a small safe set)
+ALLOWED_SYMBOLS = "!@$%&*()-_+="
+# build regex that matches only allowed characters (letters, digits and allowed symbols)
+ALLOWED_PASSWORD_RE = re.compile(rf"^[A-Za-z0-9{re.escape(ALLOWED_SYMBOLS)}]+$")
+
+
 def validate_password_strength(password: str, min_length: int = 8) -> None:
+    """
+    Validate password:
+      - minimum length (default 8)
+      - at least one uppercase letter
+      - at least one lowercase letter
+      - at least one digit
+      - at least one allowed symbol from ALLOWED_SYMBOLS
+      - only characters from the allowed set are permitted
+    Raises HTTPException(400) when invalid with a clear message.
+    """
+    if password is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password is required")
     errors = []
     if len(password) < min_length:
         errors.append(f"at least {min_length} characters")
@@ -42,6 +94,12 @@ def validate_password_strength(password: str, min_length: int = 8) -> None:
         errors.append("at least one uppercase letter")
     if not re.search(r"[a-z]", password):
         errors.append("at least one lowercase letter")
+    if not re.search(rf"[{re.escape(ALLOWED_SYMBOLS)}]", password):
+        errors.append(f"at least one symbol from this set: {ALLOWED_SYMBOLS}")
+    
+    # ensure every character is allowed (prevent unexpected special chars)
+    if not ALLOWED_PASSWORD_RE.fullmatch(password):
+        errors.append(f"password contains invalid character(s). Allowed symbols: {ALLOWED_SYMBOLS}")
 
     if errors:
         # Build a single readable message
@@ -54,29 +112,24 @@ def validate_password_strength(password: str, min_length: int = 8) -> None:
 @app.post("/register", status_code=status.HTTP_201_CREATED)
 def register(user_in: UserCreate, session: Session = Depends(get_session)):
     """
-    Register new user:
-      - normalize username
-      - validate username format
-      - check uniqueness (case-insensitive because usernames are stored normalized)
-      - validate password strength
-      - store hashed password
+    New registration:
+      - validate username (no spaces, lowercase only, allowed chars)
+      - check uniqueness
+      - validate password (strength and allowed chars)
+      - store hashed password and return minimal info
     """
-    # 1) Normalize username
-    normalized = normalize_username(user_in.username)
-
-    # 2) Validate username format
-    validate_username_format(normalized)
-
-
-    # 3) Check uniqueness (username stored normalized, so equality works)
+    # validate and normalize username
+    normalized = validate_username(user_in.username)
+    
+    # uniqueness check (username stored normalized)
     statement = select(User).where(User.username == normalized)
     if session.exec(statement).first():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already registered")
 
-    # 4) Validate password strength
+    # Validate password strength
     validate_password_strength(user_in.password)
 
-    #5) create user
+    #create user
     hashed = get_password_hash(user_in.password)
     user = User(username=normalized, hashed_password=hashed)
     session.add(user)
@@ -197,18 +250,6 @@ def delete_todo(todo_id: int, session: Session = Depends(get_session), current_u
 
 #date , notification in the todo and title should be managed 
 #background scheduler
-#username
 
 
 
-
-
-
-
-
-
-
-
-
-#asyncronous 
-#multi threading
