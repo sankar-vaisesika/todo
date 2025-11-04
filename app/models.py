@@ -11,10 +11,12 @@ class UserBase(SQLModel):
 
 class UserCreate(UserBase):
     password:str
+    is_admin:Optional[bool]=Field(default=False)
 
 class User(UserBase,table=True):
     id:Optional[int]=Field(default=None,primary_key=True)
     hashed_password:str
+    is_admin:bool
     # Relationship: one user -> many todos
     todos: List["Todo"] = Relationship(back_populates="owner")
     notifications:List["Notification"]=Relationship(back_populates="user")

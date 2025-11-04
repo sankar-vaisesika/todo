@@ -2,12 +2,12 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime, timezone
 
 
-from fastapi import FastAPI,Depends,HTTPException,status
+from fastapi import FastAPI,Depends,HTTPException,status,Body
  
 from sqlmodel import Session,select
 from typing import List
 from fastapi.security import OAuth2PasswordRequestForm
-from app.auth import authenticate_user_db,get_current_user,get_password_hash,create_access_token
+from app.auth import authenticate_user_db,get_current_user,get_password_hash,create_access_token,get_current_admin
 from app.database import create_db_and_tables,get_session,engine
 from app.models import Todo,TodoCreate,TodoUpdate,User,UserCreate,Notification
 import re
@@ -75,13 +75,9 @@ def shutdown_scheduler():
 #Notification endpoints
 #-----------------
 @app.get("/notifications", response_model=list[Notification])
-def list_notifications(
-    session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
-):
+def list_notifications(session: Session = Depends(get_session),current_user: User = Depends(get_current_user)):
     notifications = session.exec(
-        select(Notification).where(Notification.user_id == current_user.id)
-    ).all()
+        select(Notification).where(Notification.user_id == current_user.id)).all()
     return notifications
 
 def normalize_username_candidate(raw: str) -> str:
@@ -177,7 +173,7 @@ def validate_password_strength(password: str, min_length: int = 8) -> None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
 
 # ----------------------------
-# User registration
+# User/Admin registration
 # ----------------------------
 @app.post("/register", status_code=status.HTTP_201_CREATED)
 def register(user_in: UserCreate, session: Session = Depends(get_session)):
@@ -201,7 +197,8 @@ def register(user_in: UserCreate, session: Session = Depends(get_session)):
 
     #create user
     hashed = get_password_hash(user_in.password)
-    user = User(username=normalized, hashed_password=hashed)
+    
+    user = User(username=normalized, hashed_password=hashed,is_admin=user_in.is_admin)
     session.add(user)
     session.commit()
     session.refresh(user)
@@ -222,6 +219,63 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), ses
 
     access_token = create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
+
+#----------------------------
+#ADMIN:list all users(admin only)
+#----------------------------
+
+@app.get("/admin/users/",response_model=list[dict])
+def admin_list_users(session:Session=Depends(get_session),admin:User=Depends(get_current_admin)):
+    """
+    Return minimal info for all users.
+    """
+    users=session.exec(select(User)).all()
+
+    return [{"id": u.id, "username": u.username, "is_admin": u.is_admin} for u in users]
+
+#-----------------------------
+#ADMIN:delete user
+#-----------------------------
+@app.delete("/admin/users/{user_id}",status_code=status.HTTP_204_NO_CONTENT)
+def admin_delete_user(user_id:int,session:Session=Depends(get_session),admin:User=Depends(get_current_admin)):
+    user=session.get(User,user_id)
+    if not user:
+        raise HTTPException(status_code=404,detail="user not found")
+    # Option: delete user's todos and notifications explicitly
+    session.exec(select(Notification).where(Notification.user_id==user.id)).all()
+    #delete associated todos
+    todos=session.exec(select(Todo).where(Todo.owner_id==user.id)).all()
+
+    for t in todos:
+        session.delete(t)
+    # delete notifications
+    notifs = session.exec(select(Notification).where(Notification.user_id == user.id)).all()
+    for n in notifs:
+        session.delete(n)
+    session.delete(user)
+    session.commit()    
+    return None
+
+# ----------------------------
+# ADMIN: bulk-notify all users (store Notification rows for everyone)
+# ----------------------------
+@app.post("/admin/bulk-notify",status_code=status.HTTP_201_CREATED)
+def admin_bulk_notify(title: str = Body(..., embed=True), message: str = Body(..., embed=True),session:Session=Depends(get_session),admin:User=Depends(get_current_user)):
+    """
+    Create a Notification for each user (except admins optionally).
+    Example POST body:
+      {"title":"System maintenance", "message":"Service will be down at 02:00 UTC"}
+    """ 
+    users=session.exec(select(User)).all()
+    created=0
+    for u in users:
+        if u.is_admin:
+            continue
+        notif=Notification(title=title,message=message,user_id=u.id)
+        session.add(notif)
+        created+=1
+    session.commit()
+    return {"created":created}
 
 # ----------------------------
 # CREATE TODO (owner is current user)
