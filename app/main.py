@@ -1,9 +1,8 @@
 from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime, timezone
 
-
 from fastapi import FastAPI,Depends,HTTPException,status,Body
- 
+
 from sqlmodel import Session,select
 from typing import List
 from fastapi.security import OAuth2PasswordRequestForm
@@ -220,8 +219,27 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), ses
     access_token = create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
 
+from pydantic import BaseModel
+# ------------------------
+# Dashboard Response Model
+# ------------------------
+class DashboardResponse(BaseModel):
+    todos: List[Todo]
+    notifications: List[Notification]
+
+# ------------------------
+# Dashboard Endpoint
+# ------------------------
+@app.get("/me/dashboard",response_model=DashboardResponse)
+def my_dashboard(session:Session=Depends(get_session),current_user:User=Depends(get_current_user)):
+    t_stmt=select(Todo).where(Todo.owner_id==current_user.id).order_by(Todo.updated_at.desc())
+    n_stmt=select(Notification).where(Notification.user_id==current_user.id).order_by(Notification.created_at.desc())
+
+    todos=session.exec(t_stmt).all()
+    notifications=session.exec(n_stmt).all()
+    return{"todos":todos,"notifications":notifications}
 #----------------------------
-#ADMIN:list all users(admin only)
+#ADMIN:list all users(admin only)   
 #----------------------------
 
 @app.get("/admin/users/",response_model=list[dict])
@@ -383,9 +401,5 @@ def delete_todo(todo_id: int, session: Session = Depends(get_session), current_u
     session.commit()
     return None
 
-#date , notification in the todo and title should be managed 
-#background scheduler
-
-
-#add admin users with all permissions
-#admin can send bulk notification to all users  
+#leetcode 5 quest
+#optimize more 
